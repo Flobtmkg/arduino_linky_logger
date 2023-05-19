@@ -1,0 +1,14 @@
+{
+	"con_ssid": "network1",
+	"con_password": "password",
+	"net_timeout": "15000",
+	"net_endpoint": "http://192.168.0.13:8080/api/v1/datapoints",
+	"net_sha1": "226EACE3C99C47AFD453CECCA4ECF0A2E530D762",
+	"aut_login": "user1",
+	"aut_password": "password1",
+	"led_threshold": "15",
+	"mod_debug": "false",
+	"mod_initleddance": "true",
+	"dev_spisdcspin": "8",
+	"dev_photorespin": "14"
+}
