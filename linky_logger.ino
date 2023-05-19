@@ -27,6 +27,7 @@ PROGMEM static const char PARAM_CON_SSID[] = "con_ssid";
 PROGMEM static const char PARAM_CON_PASSWORD[] = "con_password";
 PROGMEM static const char PARAM_NET_TIMEOUT[] = "net_timeout";
 PROGMEM static const char PARAM_NET_ENDPOINT[] = "net_endpoint";
+PROGMEM static const char PARAM_NET_FINGERPRINT[] = "net_sha1";
 PROGMEM static const char PARAM_AUT_LOGIN[] = "aut_login";
 PROGMEM static const char PARAM_AUT_PASSWORD[] = "aut_password";
 PROGMEM static const char PARAM_LED_THRESHOLD[] = "led_threshold";
@@ -72,14 +73,15 @@ static const byte RESPONSES_NBR_LIMIT = 5;                              // Maxim
 //                                            |Global injectable variables block|
 //                                            ----------------------------------
 
-String connexionSSID = "";                                               // wifi network name 
-String connexionPSWRD = "";                                              // wifi password
+String connexionSSID = "";                                              // wifi network name 
+String connexionPSWRD = "";                                             // wifi password
 unsigned int responseTimeout = 10000;                                   // Communication timeout milis for pending inter-chip commands. Default is 10000.
-String postBackendEndpoint = "";                                         // Back-end to contact. Complete HTTP/HTTPS entry-point adress for POST method.
-String authentLogin = "";                                                // Login for back-end authentification (if any)
-String authentPassword = "";                                             // Password for back-end authentification (if any)
+String postBackendEndpoint = "";                                        // Back-end to contact. Complete HTTP/HTTPS entry-point adress for POST method.
+String serverCertFingerprint = "";                                      // TLS Cert Fingerprint.
+String authentLogin = "";                                               // Login for back-end authentification (if any)
+String authentPassword = "";                                            // Password for back-end authentification (if any)
 int lightThreshold = 800;                                               // Light detection sensitivity threshold. voltage mesurement on 10 bits (0-1023). The higher the value, the less sensitive the detection is. default is 15.
-bool debugMode = false;                                                 // Debug mode (?). Default is false.
+bool debugMode = false;                                                 // Debug mode. Default is false.
 bool showInitLedDance = true;                                           // Led animation to indicate a successful initialization. Default is true.
 int pinCS = 8;                                                          // SPI CS pin for SD card reader. Default is Pin 8 (Arduino Zero).
 int analogLightResistorPin = A0;                                        // Photoresistor input pin. Default is Analog pin A0.
@@ -145,8 +147,9 @@ void setup() {
   }
   
   // Perform a NTWKCHANG command to init wifi connexion on the 8266 wifi module
-  JSONVar emptyJsonVar;
-  sendToWifiModule(String(FPSTR(CMD_NTWKCHANG)).c_str(), "", connexionSSID.c_str(), connexionPSWRD.c_str(), &emptyJsonVar, 0);
+  JSONVar ntwkchangJsonVar;
+  ntwkchangJsonVar[String(FPSTR(PARAM_NET_FINGERPRINT))] = serverCertFingerprint;  // push TLS cert fingerprint of the server to the wifi module
+  sendToWifiModule(String(FPSTR(CMD_NTWKCHANG)).c_str(), "", connexionSSID.c_str(), connexionPSWRD.c_str(), &ntwkchangJsonVar, 0);
 
   // TODO Check if the backend endpoint is correctly set
   
@@ -156,12 +159,26 @@ void setup() {
 
 
 void loop() {
-  // check sensors
-  checkForLightResistance();
-  // check or inter-chip messages
-  checkForWifiModuleMessages();
+  if(!debugMode){
+    // check sensors
+    checkForLightResistance();
+    // check or inter-chip messages
+    checkForWifiModuleMessages();
+  } else {
+    debugLoop();
+  }
 }
 
+
+void debugLoop() {
+  if((millis() - lastMilisCheckPoint) > 60000){
+    JSONVar myData;
+    myData[String(FPSTR(JSON_LEDMILIS))] = (millis() - lastMilisCheckPoint);
+    Serial.println(F("request start to wifi module"));
+    sendToWifiModule(String(FPSTR(CMD_HTTPSGET)).c_str(), postBackendEndpoint.c_str(), "", "", &myData, 3);
+    lastMilisCheckPoint = millis();
+  }
+}
 
 
 void initSuccessfulLEDDance(){
@@ -222,6 +239,7 @@ void injectInitParameters(){
       String jsonConPassword = String((const char*)initParams[String(FPSTR(PARAM_CON_PASSWORD))]);
       String jsonNetTimeout = String((const char*)initParams[String(FPSTR(PARAM_NET_TIMEOUT))]);
       String jsonNetEndpoint = String((const char*)initParams[String(FPSTR(PARAM_NET_ENDPOINT))]);
+      String jsonNetFingerprint = String((const char*)initParams[String(FPSTR(PARAM_NET_FINGERPRINT))]);
       String jsonAutLogin = String((const char*)initParams[String(FPSTR(PARAM_AUT_LOGIN))]);
       String jsonAutPassword = String((const char*)initParams[String(FPSTR(PARAM_AUT_PASSWORD))]);
       String jsonLedThreshold = String((const char*)initParams[String(FPSTR(PARAM_LED_THRESHOLD))]);
@@ -244,6 +262,10 @@ void injectInitParameters(){
       }
       if(jsonNetEndpoint != String(FPSTR(UNDEFINED))){
         postBackendEndpoint = jsonNetEndpoint;
+      }
+      if(jsonNetFingerprint != String(FPSTR(UNDEFINED)) && jsonNetFingerprint.length() == 20){
+        jsonNetFingerprint.toUpperCase();
+        serverCertFingerprint = jsonNetFingerprint;
       }
       if(jsonAutLogin != String(FPSTR(UNDEFINED))){
         authentLogin = jsonAutLogin;
@@ -328,7 +350,7 @@ void sendToWifiModule(const char* command, const char* endpoint, const char* log
   JSONVar requestMessage;
   requestMessage[String(FPSTR(MSG_ENUM_CMD))] = command;  // Command
   requestMessage[String(FPSTR(MSG_ENUM_CMD_SEQ))] = (unsigned long)cmdSequence;
-  requestMessage[String(FPSTR(MSG_ENUM_CODE))] = "0";
+  requestMessage[String(FPSTR(MSG_ENUM_CODE))] = 0;
   requestMessage[String(FPSTR(MSG_ENUM_ENDPOINT))] = endpoint;
   requestMessage[String(FPSTR(MSG_ENUM_LOGIN))] = login;
   requestMessage[String(FPSTR(MSG_ENUM_PASSWORD))] = password;
@@ -449,9 +471,9 @@ void callbackManagement(byte callbackID, JSONVar response) {
 
 void postSensorDataCallback(JSONVar response) {
 
-  String code = String((const char*)response[String(FPSTR(MSG_ENUM_CODE))]);
+  int code = (int)response[String(FPSTR(MSG_ENUM_CODE))];
   // callback for sensor data post to server
-  if ("200" == code) {
+  if (200 == code) {
     Serial.println(F("Post sensor Data OK"));
   } else {
     Serial.println(F("Post sensor Data error code : "));
@@ -462,8 +484,8 @@ void postSensorDataCallback(JSONVar response) {
 
 void networkChangeCallback(JSONVar response) {
   // callback for sensor data post to server
-  String code = String((const char*)response[String(FPSTR(MSG_ENUM_CODE))]);
-  if ("0" == code) {
+  int code = (int)response[String(FPSTR(MSG_ENUM_CODE))];
+  if (1 == code) {
     Serial.print(F("Network change OK, connected to "));
     Serial.print((const char*)response[String(FPSTR(MSG_ENUM_LOGIN))]);
     Serial.println();
