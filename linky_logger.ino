@@ -28,6 +28,7 @@ PROGMEM static const char PARAM_CON_PASSWORD[] = "con_password";
 PROGMEM static const char PARAM_NET_TIMEOUT[] = "net_timeout";
 PROGMEM static const char PARAM_NET_ENDPOINT[] = "net_endpoint";
 PROGMEM static const char PARAM_NET_FINGERPRINT[] = "net_sha1";
+PROGMEM static const char PARAM_NET_MODULE_TIMEOUT[] = "net_module_timeout";
 PROGMEM static const char PARAM_AUT_LOGIN[] = "aut_login";
 PROGMEM static const char PARAM_AUT_PASSWORD[] = "aut_password";
 PROGMEM static const char PARAM_LED_THRESHOLD[] = "led_threshold";
@@ -75,7 +76,8 @@ static const byte RESPONSES_NBR_LIMIT = 5;                              // Maxim
 
 String connexionSSID = "";                                              // wifi network name 
 String connexionPSWRD = "";                                             // wifi password
-unsigned int responseTimeout = 10000;                                   // Communication timeout milis for pending inter-chip commands. Default is 10000.
+unsigned int responseTimeout = 10000;                                   // Communication timeout milis for pending inter-chip commands, Arduino side. Default is 10000.
+unsigned long wifiModuleTimeoutTimeout = 60000;                         // Timeout milis for pending connection on the wifi module side. Also define HTTP request timeout at 1:10 of that value. Default is 60000.
 String postBackendEndpoint = "";                                        // Back-end to contact. Complete HTTP/HTTPS entry-point adress for POST method.
 String serverCertFingerprint = "";                                      // TLS Cert Fingerprint.
 String authentLogin = "";                                               // Login for back-end authentification (if any)
@@ -149,6 +151,7 @@ void setup() {
   // Perform a NTWKCHANG command to init wifi connexion on the 8266 wifi module
   JSONVar ntwkchangJsonVar;
   ntwkchangJsonVar[String(FPSTR(PARAM_NET_FINGERPRINT))] = serverCertFingerprint;  // push TLS cert fingerprint of the server to the wifi module
+  ntwkchangJsonVar[String(FPSTR(PARAM_NET_MODULE_TIMEOUT))] = wifiModuleTimeoutTimeout;  // push wifi module timeout value
   sendToWifiModule(String(FPSTR(CMD_NTWKCHANG)).c_str(), "", connexionSSID.c_str(), connexionPSWRD.c_str(), &ntwkchangJsonVar, 0);
 
   // TODO Check if the backend endpoint is correctly set
@@ -240,6 +243,7 @@ void injectInitParameters(){
       String jsonNetTimeout = String((const char*)initParams[String(FPSTR(PARAM_NET_TIMEOUT))]);
       String jsonNetEndpoint = String((const char*)initParams[String(FPSTR(PARAM_NET_ENDPOINT))]);
       String jsonNetFingerprint = String((const char*)initParams[String(FPSTR(PARAM_NET_FINGERPRINT))]);
+      String jsonNetModuleTimeout = String((const char*)initParams[String(FPSTR(PARAM_NET_MODULE_TIMEOUT))]);
       String jsonAutLogin = String((const char*)initParams[String(FPSTR(PARAM_AUT_LOGIN))]);
       String jsonAutPassword = String((const char*)initParams[String(FPSTR(PARAM_AUT_PASSWORD))]);
       String jsonLedThreshold = String((const char*)initParams[String(FPSTR(PARAM_LED_THRESHOLD))]);
@@ -254,7 +258,7 @@ void injectInitParameters(){
       if(jsonConPassword != String(FPSTR(UNDEFINED))){
         connexionPSWRD = jsonConPassword;
       }
-      if(jsonNetTimeout != String(FPSTR(UNDEFINED)) && jsonNetTimeout.toInt() > 0){
+      if(jsonNetTimeout != String(FPSTR(UNDEFINED))){
         int tmpValue = jsonNetTimeout.toInt();
         if(tmpValue > 0 && tmpValue < 60000){
           responseTimeout = tmpValue;
@@ -266,6 +270,12 @@ void injectInitParameters(){
       if(jsonNetFingerprint != String(FPSTR(UNDEFINED)) && jsonNetFingerprint.length() == 20){
         jsonNetFingerprint.toUpperCase();
         serverCertFingerprint = jsonNetFingerprint;
+      }
+      if(jsonNetModuleTimeout != String(FPSTR(UNDEFINED))){
+        long tmpValue = jsonNetTimeout.toInt();
+        if(tmpValue > 10000 && tmpValue < 120000){
+          wifiModuleTimeoutTimeout = tmpValue;
+        }
       }
       if(jsonAutLogin != String(FPSTR(UNDEFINED))){
         authentLogin = jsonAutLogin;

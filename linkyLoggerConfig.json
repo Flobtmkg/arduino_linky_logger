@@ -4,6 +4,7 @@
 	"net_timeout": "15000",
 	"net_endpoint": "http://192.168.0.13:8080/api/v1/datapoints",
 	"net_sha1": "226EACE3C99C47AFD453CECCA4ECF0A2E530D762",
+	"net_module_timeout": "30000",
 	"aut_login": "user1",
 	"aut_password": "password1",
 	"led_threshold": "15",
