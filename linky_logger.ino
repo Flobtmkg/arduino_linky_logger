@@ -417,7 +417,7 @@ void timeoutManagement() {
 
 // async message read and build
 void checkForWifiModuleMessages() {
-  while (wifiModuleSerial.available() > 0) {
+  if (wifiModuleSerial.available() > 0) {
     char inChar = (char)wifiModuleSerial.read();
     if (!isReading && inChar == START_MESSAGE_BLOCK) {
       // the start of a message has been detected => we init a string buffer
@@ -433,8 +433,6 @@ void checkForWifiModuleMessages() {
       Serial.print(messageBuffer);
       Serial.println();
 
-      // erase the buffer
-      memset(messageBuffer, 0, MESSAGE_SIZE_LIMIT);
       messageCharIterator = 0;
 
       unsigned long sequenceResp = (unsigned long)response[String(FPSTR(MSG_ENUM_CMD_SEQ))];
