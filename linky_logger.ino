@@ -74,8 +74,8 @@ static const byte RESPONSES_NBR_LIMIT = 5;                              // Maxim
 //                                            |Global injectable variables block|
 //                                            ----------------------------------
 
-String connexionSSID = "";                                              // wifi network name 
-String connexionPSWRD = "";                                             // wifi password
+String connectionSSID = "";                                             // wifi network name 
+String connectionPSWRD = "";                                            // wifi password
 unsigned int responseTimeout = 10000;                                   // Communication timeout milis for pending inter-chip commands, Arduino side. Default is 10000.
 unsigned long wifiModuleTimeoutTimeout = 60000;                         // Timeout milis for pending connection on the wifi module side. Also define HTTP request timeout at 1:10 of that value. Default is 60000.
 String postBackendEndpoint = "";                                        // Back-end to contact. Complete HTTP/HTTPS entry-point adress for POST method.
@@ -108,6 +108,7 @@ struct PendingCommandStruct {
 unsigned long lastMilisCheckPoint = 0;                                  // last check read of milis() function
 bool ledHasBlinked = false;                                             // If the Linky led has been detected and the associated procedure has already been performed
 bool isReading = false;                                                 // to flag a "currently reading" state from wifiModuleSerial
+bool isConnectionOk = false;                                            // to flag if the connection is ok and identify a "network lost" event
 char messageBuffer[MESSAGE_SIZE_LIMIT];                                 // Inter-chip message String buffer
 byte messageCharIterator = 0;                                           // Inter-chip message iterator
 unsigned long cmdSequence = 1;                                          // Internal command messages sequence number
@@ -143,16 +144,9 @@ void setup() {
   injectInitParameters();
 
   digitalWrite(DEBUG_LED, LOW);
-
-  if(showInitLedDance){
-    initSuccessfulLEDDance();
-  }
   
-  // Perform a NTWKCHANG command to init wifi connexion on the 8266 wifi module
-  JSONVar ntwkchangJsonVar;
-  ntwkchangJsonVar[String(FPSTR(PARAM_NET_FINGERPRINT))] = serverCertFingerprint;  // push TLS cert fingerprint of the server to the wifi module
-  ntwkchangJsonVar[String(FPSTR(PARAM_NET_MODULE_TIMEOUT))] = wifiModuleTimeoutTimeout;  // push wifi module timeout value
-  sendToWifiModule(String(FPSTR(CMD_NTWKCHANG)).c_str(), "", connexionSSID.c_str(), connexionPSWRD.c_str(), &ntwkchangJsonVar, 0);
+  // Perform a NTWKCHANG command to init wifi connection on the 8266 wifi module
+  initNetworkChange();
 
   // TODO Check if the backend endpoint is correctly set
   
@@ -163,10 +157,19 @@ void setup() {
 
 void loop() {
   if(!debugMode){
-    // check sensors
-    checkForLightResistance();
-    // check or inter-chip messages
+    // There is no reason to call the sensors check method that potentially sends commands if connection is lost
+    // Memory wise we can not store sensor informations and batch send them later anyway
+    if(isConnectionOk){
+      // check sensors
+      checkForLightResistance();
+    } else {
+      // Connection lost management
+      connectionLostManagement();
+    }
+    // check for inter-chip messages
     checkForWifiModuleMessages();
+    // Command request management timout
+    timeoutManagement();
   } else {
     debugLoop();
   }
@@ -184,10 +187,10 @@ void debugLoop() {
 }
 
 
-void initSuccessfulLEDDance(){
+void successfulLEDDance(){
   int i = 0;
   bool ledIsOn = false;
-  int ledDelay = 600;
+  int ledDelay = 300;
   for(i = 0 ; i < 32 ; i++){
     if(ledIsOn){
       digitalWrite(DEBUG_LED, LOW);
@@ -197,11 +200,37 @@ void initSuccessfulLEDDance(){
       ledIsOn = true;
     }
     delay(ledDelay);
-    ledDelay = ledDelay - 18;
+    ledDelay = ledDelay - 9;
   }
   digitalWrite(DEBUG_LED, HIGH);
   delay(3000);
   digitalWrite(DEBUG_LED, LOW);
+}
+
+
+void failLEDDance(){
+  int i = 0;
+  bool ledIsOn = false;
+  int ledDelay = 500;
+  for(i = 0 ; i < 10 ; i++){
+    if(ledIsOn){
+      digitalWrite(DEBUG_LED, LOW);
+      ledIsOn = false;
+    } else {
+      digitalWrite(DEBUG_LED, HIGH);
+      ledIsOn = true;
+    }
+    delay(ledDelay);
+  }
+  digitalWrite(DEBUG_LED, LOW);
+}
+
+
+void initNetworkChange(){
+  JSONVar ntwkchangJsonVar;
+  ntwkchangJsonVar[String(FPSTR(PARAM_NET_FINGERPRINT))] = serverCertFingerprint;  // push TLS cert fingerprint of the server to the wifi module
+  ntwkchangJsonVar[String(FPSTR(PARAM_NET_MODULE_TIMEOUT))] = wifiModuleTimeoutTimeout;  // push wifi module timeout value
+  sendToWifiModule(String(FPSTR(CMD_NTWKCHANG)).c_str(), "", connectionSSID.c_str(), connectionPSWRD.c_str(), &ntwkchangJsonVar, 0);
 }
 
 
@@ -252,62 +281,62 @@ void injectInitParameters(){
       String jsonDevSPISDCSPin = String((const char*)initParams[String(FPSTR(PARAM_DEV_SPISDCSPIN))]);
       String jsonDevPhotoResPin = String((const char*)initParams[String(FPSTR(PARAM_DEV_PHOTORESPIN))]);
 
-      if(jsonConSSID != String(FPSTR(UNDEFINED))){
-        connexionSSID = jsonConSSID;
+      if(String(FPSTR(UNDEFINED)) != jsonConSSID){
+        connectionSSID = jsonConSSID;
       }
-      if(jsonConPassword != String(FPSTR(UNDEFINED))){
-        connexionPSWRD = jsonConPassword;
+      if(String(FPSTR(UNDEFINED)) != jsonConPassword){
+        connectionPSWRD = jsonConPassword;
       }
-      if(jsonNetTimeout != String(FPSTR(UNDEFINED))){
+      if(String(FPSTR(UNDEFINED)) != jsonNetTimeout){
         int tmpValue = jsonNetTimeout.toInt();
         if(tmpValue > 0 && tmpValue < 60000){
           responseTimeout = tmpValue;
         }
       }
-      if(jsonNetEndpoint != String(FPSTR(UNDEFINED))){
+      if(String(FPSTR(UNDEFINED)) != jsonNetEndpoint){
         postBackendEndpoint = jsonNetEndpoint;
       }
-      if(jsonNetFingerprint != String(FPSTR(UNDEFINED)) && jsonNetFingerprint.length() == 20){
+      if(String(FPSTR(UNDEFINED)) != jsonNetFingerprint && 20 == jsonNetFingerprint.length()){
         jsonNetFingerprint.toUpperCase();
         serverCertFingerprint = jsonNetFingerprint;
       }
-      if(jsonNetModuleTimeout != String(FPSTR(UNDEFINED))){
+      if(String(FPSTR(UNDEFINED)) != jsonNetModuleTimeout){
         long tmpValue = jsonNetTimeout.toInt();
         if(tmpValue > 10000 && tmpValue < 120000){
           wifiModuleTimeoutTimeout = tmpValue;
         }
       }
-      if(jsonAutLogin != String(FPSTR(UNDEFINED))){
+      if(String(FPSTR(UNDEFINED)) != jsonAutLogin){
         authentLogin = jsonAutLogin;
       }
-      if(jsonAutPassword != String(FPSTR(UNDEFINED))){
+      if(String(FPSTR(UNDEFINED)) != jsonAutPassword){
         authentPassword = jsonAutPassword;
       }
-      if(jsonLedThreshold != String(FPSTR(UNDEFINED)) && jsonLedThreshold.toInt() > 0){
+      if(String(FPSTR(UNDEFINED)) != jsonLedThreshold && jsonLedThreshold.toInt() > 0){
         int tmpValue = jsonLedThreshold.toInt();
-        if(tmpValue > 0 && tmpValue <1024){
+        if(tmpValue > 0 && tmpValue < 1024){
           lightThreshold = jsonLedThreshold.toInt();
         }
       }
-      if(jsonModDebug != String(FPSTR(UNDEFINED))){
-        if(jsonModDebug == "true" || jsonModDebug == "TRUE"){
+      if(String(FPSTR(UNDEFINED)) != jsonModDebug){
+        if("true" == jsonModDebug || "TRUE" == jsonModDebug){
           debugMode = true;
-        } else if(jsonModDebug == "false" || jsonModDebug == "FALSE"){
+        } else if("false" == jsonModDebug || "FALSE" == jsonModDebug){
           debugMode = false;
         }
       }
-      if(jsonModInitLedDance != String(FPSTR(UNDEFINED))){
-        if(jsonModInitLedDance == "true" || jsonModInitLedDance == "TRUE"){
+      if(String(FPSTR(UNDEFINED)) != jsonModInitLedDance){
+        if("true" == jsonModInitLedDance || "TRUE" == jsonModInitLedDance){
           showInitLedDance = true;
-        } else if(jsonModInitLedDance == "false" || jsonModInitLedDance == "FALSE"){
+        } else if("false" == jsonModInitLedDance || "FALSE" == jsonModInitLedDance){
           showInitLedDance = false;
         }
       }
       // Dev params
-      if(jsonDevSPISDCSPin != String(FPSTR(UNDEFINED)) && jsonDevSPISDCSPin.toInt() > 0){
+      if(String(FPSTR(UNDEFINED)) != jsonDevSPISDCSPin && jsonDevSPISDCSPin.toInt() > 0){
         pinCS = jsonDevSPISDCSPin.toInt();
       }
-      if(jsonDevPhotoResPin != String(FPSTR(UNDEFINED)) && jsonDevPhotoResPin.toInt() > 0){
+      if(String(FPSTR(UNDEFINED)) != jsonDevPhotoResPin && jsonDevPhotoResPin.toInt() > 0){
         analogLightResistorPin = jsonDevPhotoResPin.toInt();
       }
       Serial.println(F("Config params found and injected successfuly!"));
@@ -330,10 +359,12 @@ void checkForLightResistance(){
 
     if(lastMilisCheckPoint > 0){
       // calculate and send data
-      JSONVar myData;
-      myData[String(FPSTR(JSON_LEDMILIS))] = tmpMilis - lastMilisCheckPoint;
-      Serial.println(F("request start to wifi module"));
-      sendToWifiModule(String(FPSTR(CMD_HTTPPOST)).c_str(), postBackendEndpoint.c_str(), "", "", &myData, 1);
+      if(isConnectionOk){
+        JSONVar myData;
+        myData[String(FPSTR(JSON_LEDMILIS))] = tmpMilis - lastMilisCheckPoint;
+        Serial.println(F("request start to wifi module"));
+        sendToWifiModule(String(FPSTR(CMD_HTTPPOST)).c_str(), postBackendEndpoint.c_str(), "", "", &myData, 1);
+      }
     }
     
     lastMilisCheckPoint = tmpMilis;
@@ -381,7 +412,7 @@ void addToPendingCommands(const unsigned long messageSequenceID, const byte call
   // Tag request as pending
   bool added = false;
   for (byte i = 0; i < RESPONSES_NBR_LIMIT; i++) {
-    if (pendingCommands[i].sequence == 0) {
+    if (0 == pendingCommands[i].sequence) {
       pendingCommands[i].sequence = messageSequenceID;
       pendingCommands[i].callback = callbackID;
       pendingCommands[i].timeout = (millis() + responseTimeout);
@@ -389,7 +420,7 @@ void addToPendingCommands(const unsigned long messageSequenceID, const byte call
       break;
     }
   }
-  if (added == false) {
+  if (!added) {
     Serial.println(F("Too much commands, the oldest is deleted"));
     pendingCommands[0].sequence = messageSequenceID;
     pendingCommands[0].callback = callbackID;
@@ -415,16 +446,34 @@ void timeoutManagement() {
 }
 
 
-// async message read and build
+// If a "connection lost" event as been detected, we ask for auto-reconnect, if the demand is not already pending...
+void connectionLostManagement() {
+  bool isNetworkChangeCommandPending = false;
+  for (byte i = 0; i < RESPONSES_NBR_LIMIT; i++) {
+    if (0 != pendingCommands[i].sequence && 0 == pendingCommands[i].callback) {
+      isNetworkChangeCommandPending = true;
+      break;
+    }
+  }
+  if(!isNetworkChangeCommandPending){
+    // No connection and no response (not event -12 error callback)
+    // Show fail signal then try again
+    failLEDDance();
+    initNetworkChange();
+  }
+}
+
+
+// "Async" message read and build
 void checkForWifiModuleMessages() {
   if (wifiModuleSerial.available() > 0) {
     char inChar = (char)wifiModuleSerial.read();
-    if (!isReading && inChar == START_MESSAGE_BLOCK) {
+    if (!isReading && START_MESSAGE_BLOCK == inChar) {
       // the start of a message has been detected => we init a string buffer
       isReading = true;
       memset(messageBuffer, 0, MESSAGE_SIZE_LIMIT);
       messageCharIterator = 0;
-    } else if (isReading && inChar == STOP_MESSAGE_BLOCK) {
+    } else if (isReading && STOP_MESSAGE_BLOCK == inChar) {
       // the end of a message has been detected => we parse the message, keep the sequence up to date then empty the buffer
       isReading = false;
       JSONVar response = JSON.parse(messageBuffer);
@@ -442,7 +491,7 @@ void checkForWifiModuleMessages() {
       }
 
       for (byte i = 0; i < RESPONSES_NBR_LIMIT; i++) {
-        if (pendingCommands[i].sequence == sequenceResp) {
+        if (sequenceResp == pendingCommands[i].sequence) {
             callbackManagement(pendingCommands[i].callback, response);
             // we delete the pending command
             pendingCommands[i].sequence = 0;
@@ -455,8 +504,6 @@ void checkForWifiModuleMessages() {
       messageCharIterator++;
     }
   }
-  // Command request management timout
-  timeoutManagement();
 }
 
 //                                            ------------------
@@ -465,9 +512,9 @@ void checkForWifiModuleMessages() {
 
 void callbackManagement(byte callbackID, JSONVar response) {
   
-  if (callbackID == 0) {
+  if (0 == callbackID) {
     networkChangeCallback(response);
-  } else if (callbackID == 1) {
+  } else if (1 == callbackID) {
     postSensorDataCallback(response);
   } else {
     // Default callBack
@@ -483,6 +530,14 @@ void postSensorDataCallback(JSONVar response) {
   // callback for sensor data post to server
   if (200 == code) {
     Serial.println(F("Post sensor Data OK"));
+  } else if (-12 == code) {
+    // Probably connection lost wait 5 sec and try reconnect
+    isConnectionOk = false;
+    Serial.println(F("Post sensor Data error code : "));
+    Serial.println(code);
+    if(showInitLedDance){
+     failLEDDance();
+    }
   } else {
     Serial.println(F("Post sensor Data error code : "));
     Serial.println(code);
@@ -494,14 +549,19 @@ void networkChangeCallback(JSONVar response) {
   // callback for sensor data post to server
   int code = (int)response[String(FPSTR(MSG_ENUM_CODE))];
   if (1 == code) {
+    isConnectionOk = true;
     Serial.print(F("Network change OK, connected to "));
     Serial.print((const char*)response[String(FPSTR(MSG_ENUM_LOGIN))]);
     Serial.println();
     if(showInitLedDance){
-      initSuccessfulLEDDance();
+      successfulLEDDance();
     }
   } else {
+    isConnectionOk = false;
     Serial.println(F("Network change failed, please check the WIFI password"));
+    if(showInitLedDance){
+     failLEDDance();
+    }
   }
 }
 
