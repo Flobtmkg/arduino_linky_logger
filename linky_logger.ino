@@ -398,7 +398,7 @@ void sendToWifiModule(const char* command, const char* endpoint, const char* log
   requestMessage[String(FPSTR(MSG_ENUM_DATA))] = *data;
   // Print request to custom serial
   wifiModuleSerial.println(START_MESSAGE_BLOCK + JSON.stringify(requestMessage) + STOP_MESSAGE_BLOCK);
-  Serial.println(START_MESSAGE_BLOCK + JSON.stringify(requestMessage) + STOP_MESSAGE_BLOCK);
+  Serial.println("dbg:" + JSON.stringify(requestMessage));
 
   // Tag request as pending
   addToPendingCommands(cmdSequence, callbackID);
@@ -546,7 +546,7 @@ void postSensorDataCallback(JSONVar response) {
 
 
 void networkChangeCallback(JSONVar response) {
-  // callback for sensor data post to server
+  // callback for network change command
   int code = (int)response[String(FPSTR(MSG_ENUM_CODE))];
   if (1 == code) {
     isConnectionOk = true;
